@@ -1,9 +1,11 @@
 import { expect, describe, it, beforeEach } from "vitest";
 import { api } from "./_generated/api.js";
-import type { EmailEvent } from "./shared.js";
+import type { EmailEvent, SmsEvent } from "./shared.js";
 import {
   createTestEventOfType,
+  createTestSmsEventOfType,
   insertTestSentEmail,
+  insertTestSentSms,
   setupTest,
   setupTestLastOptions,
   type Tester,
@@ -133,6 +135,116 @@ describe("handleEmailEvent", () => {
   });
 });
 
+describe("handleSmsEvent", () => {
+  let t: Tester;
+  let event: SmsEvent;
+  let sms: Doc<"sms">;
+
+  beforeEach(async () => {
+    t = setupTest();
+    event = createTestSmsEventOfType("delivered");
+    await setupTestLastOptions(t);
+    sms = await insertTestSentSms(t);
+  });
+
+  const exec = async (
+    _event: SmsEvent | unknown = event,
+    smsId?: Id<"sms">,
+  ) => {
+    await t.mutation(api.lib.handleSmsEvent, { event: _event, smsId });
+  };
+
+  const getSms = () =>
+    t.run(async (ctx) => {
+      const _sms = await ctx.db.get(sms._id);
+      if (!_sms) throw new Error("SMS not found");
+      return _sms;
+    });
+
+  it("updates sms for delivered event", async () => {
+    await exec();
+
+    const updatedSms = await getSms();
+    expect(updatedSms.status).toBe("delivered");
+    expect(updatedSms.delivered).toBe(true);
+    const events = await t.run(async (ctx) =>
+      ctx.db
+        .query("smsDeliveryEvents")
+        .withIndex("by_smsId_eventType", (q) =>
+          q.eq("smsId", sms._id).eq("eventType", "delivered"),
+        )
+        .collect(),
+    );
+    expect(events.length).toBe(1);
+    expect(events[0].messageId).toBe("1511882900100020");
+  });
+
+  it("updates sms for accepted event", async () => {
+    event = createTestSmsEventOfType("accepted");
+
+    await exec();
+
+    const updatedSms = await getSms();
+    expect(updatedSms.status).toBe("accepted");
+    expect(updatedSms.accepted).toBe(true);
+  });
+
+  it("updates sms for replied event", async () => {
+    event = createTestSmsEventOfType("replied", { reply: "Hi there" });
+
+    await exec();
+
+    const updatedSms = await getSms();
+    expect(updatedSms.replied).toBe(true);
+    expect(updatedSms.reply).toBe("Hi there");
+  });
+
+  it("updates sms for soft bounce event", async () => {
+    event = createTestSmsEventOfType("soft_bounce");
+
+    await exec();
+
+    const updatedSms = await getSms();
+    expect(updatedSms.status).toBe("soft_bounced");
+    expect(updatedSms.softBounced).toBe(true);
+  });
+
+  it("updates sms for hard bounce event", async () => {
+    event = createTestSmsEventOfType("hard_bounce");
+
+    await exec();
+
+    const updatedSms = await getSms();
+    expect(updatedSms.status).toBe("hard_bounced");
+    expect(updatedSms.hardBounced).toBe(true);
+  });
+
+  it("updates sms for rejected event", async () => {
+    event = createTestSmsEventOfType("rejected");
+
+    await exec();
+
+    const updatedSms = await getSms();
+    expect(updatedSms.status).toBe("rejected");
+    expect(updatedSms.rejected).toBe(true);
+  });
+
+  it("uses explicit smsId from webhook url when provided", async () => {
+    await exec(createTestSmsEventOfType("accepted"), sms._id);
+
+    const updatedSms = await getSms();
+    expect(updatedSms.accepted).toBe(true);
+  });
+
+  it("gracefully handles invalid sms event structure", async () => {
+    await exec({ msg_status: "delivered" });
+
+    const updatedSms = await getSms();
+    expect(updatedSms.status).toBe("sent");
+    expect(updatedSms.finalizedAt).toBe(Number.MAX_SAFE_INTEGER);
+  });
+});
+
 describe("sendEmail", () => {
   let t: Tester;
 
@@ -248,5 +360,68 @@ describe("sendEmail", () => {
         htmlContent: "<p>Test</p>",
       }),
     ).rejects.toThrow("Subject is required when not using a templateId");
+  });
+});
+
+describe("sendSms", () => {
+  let t: Tester;
+
+  beforeEach(async () => {
+    t = setupTest();
+    await setupTestLastOptions(t);
+  });
+
+  it("accepts transactional sms", async () => {
+    const smsId: Id<"sms"> = await t.mutation(api.lib.sendSms, {
+      options: {
+        apiKey: "test-key",
+        initialBackoffMs: 1000,
+        retryAttempts: 3,
+        sandboxMode: true,
+      },
+      sender: "MyShop",
+      recipient: "33680065433",
+      content: "Enter this code: CAAA08",
+      tag: "accountValidation",
+      unicodeEnabled: true,
+    });
+
+    const sms = await t.run(async (ctx) => {
+      const _sms = await ctx.db.get(smsId);
+      if (!_sms) throw new Error("SMS not found");
+      return _sms;
+    });
+
+    expect(sms.sender).toBe("MyShop");
+    expect(sms.recipient).toBe("33680065433");
+    expect(sms.status).toBe("waiting");
+  });
+
+  it("stores optional sms fields", async () => {
+    const smsId: Id<"sms"> = await t.mutation(api.lib.sendSms, {
+      options: {
+        apiKey: "test-key",
+        initialBackoffMs: 1000,
+        retryAttempts: 3,
+        sandboxMode: true,
+        smsWebhookBaseUrl: "https://example.com/brevo-sms-webhook",
+        smsWebhookSecret: "secret",
+      },
+      sender: "MyShop",
+      recipient: "33680065433",
+      content: "Hello",
+      tag: "tagged",
+      unicodeEnabled: false,
+      organisationPrefix: "MyCompany",
+    });
+
+    const sms = await t.run(async (ctx) => {
+      const _sms = await ctx.db.get(smsId);
+      if (!_sms) throw new Error("SMS not found");
+      return _sms;
+    });
+
+    expect(sms.tag).toBe("tagged");
+    expect(sms.organisationPrefix).toBe("MyCompany");
   });
 });

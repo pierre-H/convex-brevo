@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { test } from "vitest";
-import type { EmailEvent, RuntimeConfig } from "./shared.js";
+import type { EmailEvent, RuntimeConfig, SmsEvent } from "./shared.js";
 import { convexTest } from "convex-test";
 import schema from "./schema.js";
 import type { Doc } from "./_generated/dataModel.js";
@@ -37,6 +37,30 @@ export const createTestEventOfType = (
           ? "Mailbox temporarily unavailable"
           : undefined,
   "message-id": "<test-message-id-123@smtp-relay.mailin.fr>",
+  ...overrides,
+});
+
+export const createTestSmsEventOfType = (
+  msg_status: SmsEvent["msg_status"],
+  overrides?: Partial<SmsEvent>,
+): SmsEvent => ({
+  id: 26519,
+  to: "33680065433",
+  messageId: 1511882900100020,
+  msg_status,
+  status: "OK",
+  description:
+    msg_status === "hard_bounce"
+      ? "Recipient unreachable"
+      : msg_status === "soft_bounce"
+        ? "Carrier delayed delivery"
+        : msg_status,
+  date: "2024-01-01 00:00:00",
+  ts_event: 1704067200,
+  tag: ["transactional-test"],
+  type: "transactional",
+  reference: { 1: "reference-id" },
+  reply: msg_status === "replied" ? "Hi" : undefined,
   ...overrides,
 });
 
@@ -88,6 +112,40 @@ export const insertTestSentEmail = (
     opened: false,
     clicked: false,
     messageId: "<test-message-id-123@smtp-relay.mailin.fr>",
+    segment: 1,
+    finalizedAt: Number.MAX_SAFE_INTEGER,
+    ...overrides,
+  });
+
+export const insertTestSms = (
+  t: Tester,
+  overrides: Omit<Doc<"sms">, "_id" | "_creationTime">,
+) =>
+  t.run(async (ctx) => {
+    const id = await ctx.db.insert("sms", overrides);
+    const sms = await ctx.db.get(id);
+    if (!sms) throw new Error("SMS not found");
+    return sms;
+  });
+
+export const insertTestSentSms = (t: Tester, overrides?: Partial<Doc<"sms">>) =>
+  insertTestSms(t, {
+    sender: "MyShop",
+    recipient: "33680065433",
+    content: "Enter this code: CAAA08",
+    tag: "transactional-test",
+    unicodeEnabled: false,
+    organisationPrefix: "MyCompany",
+    status: "sent",
+    accepted: false,
+    delivered: false,
+    replied: false,
+    softBounced: false,
+    hardBounced: false,
+    rejected: false,
+    blacklisted: false,
+    unsubscribed: false,
+    messageId: "1511882900100020",
     segment: 1,
     finalizedAt: Number.MAX_SAFE_INTEGER,
     ...overrides,

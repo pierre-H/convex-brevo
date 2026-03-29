@@ -5,7 +5,7 @@ import { internalMutation } from "./_generated/server.js";
 const crons = cronJobs();
 
 crons.interval(
-  "Remove old emails from the brevo component",
+  "Remove old emails and sms from the brevo component",
   { hours: 1 },
   internal.crons.cleanupBrevo,
 );
@@ -17,11 +17,17 @@ export const cleanupBrevo = internalMutation({
     await ctx.scheduler.runAfter(0, components.brevo.lib.cleanupOldEmails, {
       olderThan: ONE_WEEK_MS,
     });
+    await ctx.scheduler.runAfter(0, components.brevo.lib.cleanupOldSms, {
+      olderThan: ONE_WEEK_MS,
+    });
     await ctx.scheduler.runAfter(
       0,
       components.brevo.lib.cleanupAbandonedEmails,
       { olderThan: ONE_WEEK_MS },
     );
+    await ctx.scheduler.runAfter(0, components.brevo.lib.cleanupAbandonedSms, {
+      olderThan: ONE_WEEK_MS,
+    });
   },
 });
 

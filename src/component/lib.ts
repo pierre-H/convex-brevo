@@ -19,10 +19,17 @@ import {
   vOptions,
   vParams,
   vRecipient,
+  vSmsEvent,
+  vSmsStatus,
   vStatus,
 } from "./shared.js";
 import type { FunctionHandle } from "convex/server";
-import type { EmailEvent, RunMutationCtx, RunQueryCtx } from "./shared.js";
+import type {
+  EmailEvent,
+  RunMutationCtx,
+  RunQueryCtx,
+  SmsEvent,
+} from "./shared.js";
 import { isDeepEqual } from "remeda";
 import schema from "./schema.js";
 import { omit } from "convex-helpers";
@@ -318,6 +325,188 @@ export const get = query({
   },
 });
 
+export const sendSms = mutation({
+  args: {
+    options: vOptions,
+    sender: v.string(),
+    recipient: v.string(),
+    content: v.string(),
+    tag: v.optional(v.string()),
+    unicodeEnabled: v.optional(v.boolean()),
+    organisationPrefix: v.optional(v.string()),
+  },
+  returns: v.id("sms"),
+  handler: async (ctx, args) => {
+    const segment = getSegment(Date.now());
+    const smsId = await ctx.db.insert("sms", {
+      sender: args.sender,
+      recipient: args.recipient,
+      content: args.content,
+      tag: args.tag,
+      unicodeEnabled: args.unicodeEnabled,
+      organisationPrefix: args.organisationPrefix,
+      status: "waiting",
+      accepted: false,
+      delivered: false,
+      replied: false,
+      softBounced: false,
+      hardBounced: false,
+      rejected: false,
+      blacklisted: false,
+      unsubscribed: false,
+      segment,
+      finalizedAt: FINALIZED_EPOCH,
+    });
+
+    await scheduleSmsBatchRun(ctx, args.options);
+    return smsId;
+  },
+});
+
+export const createManualSms = mutation({
+  args: {
+    sender: v.string(),
+    recipient: v.string(),
+    content: v.string(),
+    tag: v.optional(v.string()),
+    unicodeEnabled: v.optional(v.boolean()),
+    organisationPrefix: v.optional(v.string()),
+  },
+  returns: v.id("sms"),
+  handler: async (ctx, args) => {
+    return await ctx.db.insert("sms", {
+      sender: args.sender,
+      recipient: args.recipient,
+      content: args.content,
+      tag: args.tag,
+      unicodeEnabled: args.unicodeEnabled,
+      organisationPrefix: args.organisationPrefix,
+      status: "queued",
+      accepted: false,
+      delivered: false,
+      replied: false,
+      softBounced: false,
+      hardBounced: false,
+      rejected: false,
+      blacklisted: false,
+      unsubscribed: false,
+      segment: Infinity,
+      finalizedAt: FINALIZED_EPOCH,
+    });
+  },
+});
+
+export const updateManualSms = mutation({
+  args: {
+    smsId: v.id("sms"),
+    status: vSmsStatus,
+    messageId: v.optional(v.string()),
+    errorMessage: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const finalizedAt =
+      args.status === "failed" ||
+      args.status === "cancelled" ||
+      args.status === "delivered" ||
+      args.status === "soft_bounced" ||
+      args.status === "hard_bounced" ||
+      args.status === "rejected"
+        ? Date.now()
+        : undefined;
+    await ctx.db.patch(args.smsId, {
+      status: args.status,
+      messageId: args.messageId,
+      errorMessage: args.errorMessage,
+      ...(finalizedAt ? { finalizedAt } : {}),
+    });
+  },
+});
+
+export const cancelSms = mutation({
+  args: {
+    smsId: v.id("sms"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const sms = await ctx.db.get(args.smsId);
+    if (!sms) {
+      throw new Error("SMS not found");
+    }
+    if (sms.status !== "waiting" && sms.status !== "queued") {
+      throw new Error("SMS has already been sent");
+    }
+    await ctx.db.patch(args.smsId, {
+      status: "cancelled",
+      finalizedAt: Date.now(),
+    });
+  },
+});
+
+export const getSmsStatus = query({
+  args: {
+    smsId: v.id("sms"),
+  },
+  returns: v.union(
+    v.object({
+      status: vSmsStatus,
+      errorMessage: v.union(v.string(), v.null()),
+      accepted: v.boolean(),
+      delivered: v.boolean(),
+      replied: v.boolean(),
+      softBounced: v.boolean(),
+      hardBounced: v.boolean(),
+      rejected: v.boolean(),
+      blacklisted: v.boolean(),
+      unsubscribed: v.boolean(),
+      reply: v.union(v.string(), v.null()),
+    }),
+    v.null(),
+  ),
+  handler: async (ctx, args) => {
+    const sms = await ctx.db.get(args.smsId);
+    if (!sms) {
+      return null;
+    }
+    return {
+      status: sms.status,
+      errorMessage: sms.errorMessage ?? null,
+      accepted: sms.accepted,
+      delivered: sms.delivered,
+      replied: sms.replied,
+      softBounced: sms.softBounced,
+      hardBounced: sms.hardBounced,
+      rejected: sms.rejected,
+      blacklisted: sms.blacklisted,
+      unsubscribed: sms.unsubscribed,
+      reply: sms.reply ?? null,
+    };
+  },
+});
+
+export const getSms = query({
+  args: {
+    smsId: v.id("sms"),
+  },
+  returns: v.union(
+    v.object({
+      ...schema.tables.sms.validator.fields,
+      createdAt: v.number(),
+    }),
+    v.null(),
+  ),
+  handler: async (ctx, args) => {
+    const sms = await ctx.db.get(args.smsId);
+    if (!sms) {
+      return null;
+    }
+    return {
+      ...omit(sms, ["_id", "_creationTime"]),
+      createdAt: sms._creationTime,
+    };
+  },
+});
+
 async function scheduleBatchRun(ctx: MutationCtx, options: RuntimeConfig) {
   const lastOptions = await ctx.db.query("lastOptions").unique();
   if (!lastOptions) {
@@ -342,6 +531,34 @@ async function scheduleBatchRun(ctx: MutationCtx, options: RuntimeConfig) {
   );
 
   await ctx.db.insert("nextBatchRun", {
+    runId,
+  });
+}
+
+async function scheduleSmsBatchRun(ctx: MutationCtx, options: RuntimeConfig) {
+  const lastOptions = await ctx.db.query("lastOptions").unique();
+  if (!lastOptions) {
+    await ctx.db.insert("lastOptions", {
+      options,
+    });
+  } else if (!isDeepEqual(lastOptions.options, options)) {
+    await ctx.db.replace(lastOptions._id, {
+      options,
+    });
+  }
+
+  const existing = await ctx.db.query("nextSmsBatchRun").unique();
+  if (existing) {
+    return;
+  }
+
+  const runId = await ctx.scheduler.runAfter(
+    BASE_BATCH_DELAY,
+    internal.lib.makeSmsBatch,
+    { reloop: false, segment: getSegment(Date.now() + BASE_BATCH_DELAY) },
+  );
+
+  await ctx.db.insert("nextSmsBatchRun", {
     runId,
   });
 }
@@ -403,6 +620,64 @@ export const makeBatch = internalMutation({
   },
 });
 
+export const makeSmsBatch = internalMutation({
+  args: { reloop: v.boolean(), segment: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const lastOptions = await ctx.db.query("lastOptions").unique();
+    if (!lastOptions) {
+      throw new Error("No last options found -- invariant");
+    }
+    const options = lastOptions.options;
+
+    const sms = await ctx.db
+      .query("sms")
+      .withIndex("by_status_segment", (q) =>
+        q.eq("status", "waiting").lte("segment", args.segment - 2),
+      )
+      .take(BATCH_SIZE);
+
+    if (sms.length === 0 || (args.reloop && sms.length < BATCH_SIZE)) {
+      return rescheduleSms(ctx, sms.length > 0);
+    }
+
+    console.log(`Making an SMS batch of ${sms.length} messages`);
+
+    for (const message of sms) {
+      await ctx.db.patch(message._id, {
+        status: "queued",
+      });
+    }
+
+    const delay = await getDelay(ctx);
+    await emailPool.enqueueAction(
+      ctx,
+      internal.lib.callBrevoSmsAPIWithBatch,
+      {
+        apiKey: options.apiKey,
+        smsWebhookBaseUrl: options.smsWebhookBaseUrl,
+        smsWebhookSecret: options.smsWebhookSecret,
+        sms: sms.map((message) => message._id),
+      },
+      {
+        retry: {
+          maxAttempts: options.retryAttempts,
+          initialBackoffMs: options.initialBackoffMs,
+          base: 2,
+        },
+        runAfter: delay,
+        context: { smsIds: sms.map((message) => message._id) },
+        onComplete: internal.lib.onSmsComplete,
+      },
+    );
+
+    await ctx.scheduler.runAfter(0, internal.lib.makeSmsBatch, {
+      reloop: true,
+      segment: args.segment,
+    });
+  },
+});
+
 async function reschedule(ctx: MutationCtx, emailsLeft: boolean) {
   emailsLeft =
     emailsLeft ||
@@ -426,6 +701,29 @@ async function reschedule(ctx: MutationCtx, emailsLeft: boolean) {
   }
 }
 
+async function rescheduleSms(ctx: MutationCtx, smsLeft: boolean) {
+  smsLeft =
+    smsLeft ||
+    (await ctx.db
+      .query("sms")
+      .withIndex("by_status_segment", (q) => q.eq("status", "waiting"))
+      .first()) !== null;
+
+  if (!smsLeft) {
+    const batchRun = await ctx.db.query("nextSmsBatchRun").unique();
+    if (!batchRun) {
+      throw new Error("No SMS batch run found -- invariant");
+    }
+    await ctx.db.delete(batchRun._id);
+  } else {
+    const segment = getSegment(Date.now() + BASE_BATCH_DELAY);
+    await ctx.scheduler.runAfter(BASE_BATCH_DELAY, internal.lib.makeSmsBatch, {
+      reloop: false,
+      segment,
+    });
+  }
+}
+
 async function getAllContent(
   ctx: ActionCtx,
   contentIds: Id<"content">[],
@@ -440,6 +738,14 @@ const vBatchReturns = v.union(
   v.null(),
   v.object({
     emailIds: v.array(v.id("emails")),
+    messageIds: v.array(v.string()),
+  }),
+);
+
+const vSmsBatchReturns = v.union(
+  v.null(),
+  v.object({
+    smsIds: v.array(v.id("sms")),
     messageIds: v.array(v.string()),
   }),
 );
@@ -503,6 +809,67 @@ export const callBrevoAPIWithBatch = internalAction({
   },
 });
 
+export const callBrevoSmsAPIWithBatch = internalAction({
+  args: {
+    apiKey: v.string(),
+    smsWebhookBaseUrl: v.optional(v.string()),
+    smsWebhookSecret: v.optional(v.string()),
+    sms: v.array(v.id("sms")),
+  },
+  returns: vSmsBatchReturns,
+  handler: async (ctx, args) => {
+    const payload = await createBrevoSmsPayload(
+      ctx,
+      args.sms,
+      args.smsWebhookBaseUrl,
+      args.smsWebhookSecret,
+    );
+
+    if (payload === null) {
+      console.log("No SMS to send in batch. All were cancelled or failed.");
+      return null;
+    }
+
+    const [smsIds, body] = payload;
+    const response = await fetch(
+      "https://api.brevo.com/v3/transactionalSMS/send",
+      {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "api-key": args.apiKey,
+          "content-type": "application/json",
+        },
+        body,
+      },
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      if (PERMANENT_ERROR_CODES.has(response.status)) {
+        await ctx.runMutation(internal.lib.markSmsFailed, {
+          smsIds,
+          errorMessage: `Brevo SMS API error: ${response.status} ${response.statusText} ${errorText}`,
+        });
+        return null;
+      }
+      throw new Error(`Brevo SMS API error: ${errorText}`);
+    }
+
+    const data = (await response.json()) as {
+      messageId?: number | string;
+    };
+    if (data.messageId === undefined) {
+      throw new Error("Brevo SMS API error: missing messageId");
+    }
+
+    return {
+      smsIds,
+      messageIds: [String(data.messageId)],
+    };
+  },
+});
+
 export const markEmailsFailed = internalMutation({
   args: {
     emailIds: v.array(v.id("emails")),
@@ -510,6 +877,15 @@ export const markEmailsFailed = internalMutation({
   },
   returns: v.null(),
   handler: markEmailsFailedHandler,
+});
+
+export const markSmsFailed = internalMutation({
+  args: {
+    smsIds: v.array(v.id("sms")),
+    errorMessage: v.string(),
+  },
+  returns: v.null(),
+  handler: markSmsFailedHandler,
 });
 
 async function markEmailsFailedHandler(
@@ -528,6 +904,28 @@ async function markEmailsFailedHandler(
       await ctx.db.patch(emailId, {
         status: "failed",
         failed: true,
+        errorMessage: args.errorMessage,
+        finalizedAt: Date.now(),
+      });
+    }),
+  );
+}
+
+async function markSmsFailedHandler(
+  ctx: MutationCtx,
+  args: {
+    smsIds: Id<"sms">[];
+    errorMessage: string;
+  },
+) {
+  await Promise.all(
+    args.smsIds.map(async (smsId) => {
+      const sms = await ctx.db.get(smsId);
+      if (!sms || sms.status !== "queued") {
+        return;
+      }
+      await ctx.db.patch(smsId, {
+        status: "failed",
         errorMessage: args.errorMessage,
         finalizedAt: Date.now(),
       });
@@ -569,6 +967,48 @@ export const onEmailComplete = emailPool.defineOnComplete({
           await ctx.db.patch(emailId, {
             status: "cancelled",
             errorMessage: "Brevo API job was cancelled",
+            finalizedAt: Date.now(),
+          });
+        }),
+      );
+    }
+  },
+});
+
+export const onSmsComplete = emailPool.defineOnComplete({
+  context: v.object({
+    smsIds: v.array(v.id("sms")),
+  }),
+  handler: async (ctx, args) => {
+    if (args.result.kind === "success") {
+      const result = parse(vSmsBatchReturns, args.result.returnValue);
+      if (result === null) {
+        return;
+      }
+      const { smsIds, messageIds } = result;
+      await Promise.all(
+        smsIds.map((smsId, i) =>
+          ctx.db.patch(smsId, {
+            status: "sent",
+            messageId: messageIds[i],
+          }),
+        ),
+      );
+    } else if (args.result.kind === "failed") {
+      await markSmsFailedHandler(ctx, {
+        smsIds: args.context.smsIds,
+        errorMessage: args.result.error,
+      });
+    } else if (args.result.kind === "canceled") {
+      await Promise.all(
+        args.context.smsIds.map(async (smsId) => {
+          const sms = await ctx.db.get(smsId);
+          if (!sms || sms.status !== "queued") {
+            return;
+          }
+          await ctx.db.patch(smsId, {
+            status: "cancelled",
+            errorMessage: "Brevo SMS API job was cancelled",
             finalizedAt: Date.now(),
           });
         }),
@@ -627,6 +1067,41 @@ async function createBrevoPayload(
   return [[email._id], JSON.stringify(payload)];
 }
 
+async function createBrevoSmsPayload(
+  ctx: ActionCtx,
+  smsIds: Id<"sms">[],
+  smsWebhookBaseUrl?: string,
+  smsWebhookSecret?: string,
+): Promise<[Id<"sms">[], string] | null> {
+  const allSms = await ctx.runQuery(internal.lib.getSmsByIds, {
+    smsIds,
+  });
+  const sms = allSms.filter((message) => message.status === "queued");
+  if (sms.length === 0) {
+    return null;
+  }
+
+  const message = sms[0];
+  const payload: Record<string, unknown> = {
+    sender: message.sender,
+    recipient: message.recipient,
+    content: message.content,
+    type: "transactional",
+    tag: message.tag,
+    unicodeEnabled: message.unicodeEnabled,
+    organisationPrefix: message.organisationPrefix,
+  };
+
+  if (smsWebhookBaseUrl && smsWebhookSecret) {
+    const webUrl = new URL(smsWebhookBaseUrl);
+    webUrl.searchParams.set("secret", smsWebhookSecret);
+    webUrl.searchParams.set("smsId", message._id);
+    payload.webUrl = webUrl.toString();
+  }
+
+  return [[message._id], JSON.stringify(payload)];
+}
+
 const FIXED_WINDOW_DELAY = 100;
 async function getDelay(ctx: RunMutationCtx & RunQueryCtx): Promise<number> {
   const limit = await brevoApiRateLimiter.limit(ctx, "brevoApi", {
@@ -663,6 +1138,14 @@ export const getEmailsByIds = internalQuery({
   },
 });
 
+export const getSmsByIds = internalQuery({
+  args: { smsIds: v.array(v.id("sms")) },
+  handler: async (ctx, args) => {
+    const sms = await Promise.all(args.smsIds.map((id) => ctx.db.get(id)));
+    return sms.filter((message): message is Doc<"sms"> => message !== null);
+  },
+});
+
 export const getEmailByMessageId = internalQuery({
   args: { messageId: v.string() },
   handler: async (ctx, args) => {
@@ -672,6 +1155,18 @@ export const getEmailByMessageId = internalQuery({
       .unique();
     if (!email) throw new Error("Email not found for messageId");
     return email;
+  },
+});
+
+export const getSmsByMessageId = internalQuery({
+  args: { messageId: v.string() },
+  handler: async (ctx, args) => {
+    const sms = await ctx.db
+      .query("sms")
+      .withIndex("by_messageId", (q) => q.eq("messageId", args.messageId))
+      .unique();
+    if (!sms) throw new Error("SMS not found for messageId");
+    return sms;
   },
 });
 
@@ -698,6 +1193,24 @@ function eventCreatedAt(event: EmailEvent) {
   if (event.date) return event.date;
   if (event.ts_epoch) return new Date(event.ts_epoch).toISOString();
   if (event.ts) return new Date(event.ts * 1000).toISOString();
+  return new Date().toISOString();
+}
+
+function smsEventMessage(event: SmsEvent) {
+  return event.description;
+}
+
+function smsEventCreatedAt(event: SmsEvent) {
+  if (event.date) return event.date;
+  if (typeof event.ts_event === "number") {
+    return new Date(event.ts_event * 1000).toISOString();
+  }
+  if (typeof event.ts_event === "string") {
+    const parsed = Number(event.ts_event);
+    if (!Number.isNaN(parsed)) {
+      return new Date(parsed * 1000).toISOString();
+    }
+  }
   return new Date().toISOString();
 }
 
@@ -814,6 +1327,122 @@ function computeEmailUpdateFromEvent(
   return null;
 }
 
+function computeSmsUpdateFromEvent(
+  sms: Doc<"sms">,
+  event: SmsEvent,
+): Doc<"sms"> | null {
+  const statusRank: Record<Doc<"sms">["status"], number> = {
+    waiting: 0,
+    queued: 1,
+    sent: 2,
+    accepted: 3,
+    delivered: 4,
+    soft_bounced: 5,
+    hard_bounced: 6,
+    rejected: 6,
+    failed: 6,
+    cancelled: 100,
+  };
+
+  const currentRank = statusRank[sms.status];
+  const canUpgradeTo = (next: Doc<"sms">["status"]) => {
+    if (sms.status === "cancelled") return false;
+    return statusRank[next] > currentRank;
+  };
+
+  if (event.msg_status === "sent") {
+    if (!canUpgradeTo("sent")) return null;
+    return { ...sms, status: "sent" };
+  }
+
+  if (event.msg_status === "accepted") {
+    const updated: Doc<"sms"> = { ...sms, accepted: true };
+    if (canUpgradeTo("accepted")) {
+      updated.status = "accepted";
+    }
+    return updated;
+  }
+
+  if (event.msg_status === "delivered") {
+    const updated: Doc<"sms"> = { ...sms, delivered: true };
+    if (canUpgradeTo("delivered")) {
+      updated.status = "delivered";
+      updated.finalizedAt = Date.now();
+    }
+    return updated;
+  }
+
+  if (event.msg_status === "replied") {
+    return {
+      ...sms,
+      replied: true,
+      reply: event.reply,
+    };
+  }
+
+  if (event.msg_status === "soft_bounce") {
+    const updated: Doc<"sms"> = {
+      ...sms,
+      softBounced: true,
+      errorMessage: smsEventMessage(event),
+    };
+    if (canUpgradeTo("soft_bounced")) {
+      updated.status = "soft_bounced";
+      updated.finalizedAt = Date.now();
+    }
+    return updated;
+  }
+
+  if (event.msg_status === "hard_bounce") {
+    const updated: Doc<"sms"> = {
+      ...sms,
+      hardBounced: true,
+      errorMessage: smsEventMessage(event),
+    };
+    if (canUpgradeTo("hard_bounced")) {
+      updated.status = "hard_bounced";
+      updated.finalizedAt = Date.now();
+    }
+    return updated;
+  }
+
+  if (event.msg_status === "rejected") {
+    const updated: Doc<"sms"> = {
+      ...sms,
+      rejected: true,
+      errorMessage: smsEventMessage(event),
+    };
+    if (canUpgradeTo("rejected")) {
+      updated.status = "rejected";
+      updated.finalizedAt = Date.now();
+    }
+    return updated;
+  }
+
+  if (event.msg_status === "blacklisted" || event.msg_status === "skip") {
+    const updated: Doc<"sms"> = {
+      ...sms,
+      blacklisted: event.msg_status === "blacklisted" ? true : sms.blacklisted,
+      errorMessage: smsEventMessage(event),
+    };
+    if (canUpgradeTo("failed")) {
+      updated.status = "failed";
+      updated.finalizedAt = Date.now();
+    }
+    return updated;
+  }
+
+  if (event.msg_status === "unsubscribe") {
+    return { ...sms, unsubscribed: true };
+  }
+
+  if (event.msg_status === "subscribe") {
+    return null;
+  }
+
+  return null;
+}
+
 export const handleEmailEvent = mutation({
   args: {
     event: v.any(),
@@ -860,6 +1489,50 @@ export const handleEmailEvent = mutation({
   },
 });
 
+export const handleSmsEvent = mutation({
+  args: {
+    event: v.any(),
+    smsId: v.optional(v.id("sms")),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const result = attemptToParse(vSmsEvent, args.event);
+    if (result.kind === "error") {
+      console.warn(`Invalid SMS event received from Brevo. ${result.error}.`);
+      return;
+    }
+
+    const event = result.data;
+    const messageId = String(event.messageId);
+    const sms = args.smsId
+      ? await ctx.db.get(args.smsId)
+      : await ctx.db
+          .query("sms")
+          .withIndex("by_messageId", (q) => q.eq("messageId", messageId))
+          .unique();
+
+    if (!sms) {
+      console.info(`SMS not found for messageId: ${messageId}, ignoring...`);
+      return;
+    }
+
+    await ctx.db.insert("smsDeliveryEvents", {
+      smsId: sms._id,
+      messageId,
+      eventType: event.msg_status,
+      createdAt: smsEventCreatedAt(event),
+      message: smsEventMessage(event),
+    });
+
+    const updated = computeSmsUpdateFromEvent(sms, event);
+    if (updated) {
+      await ctx.db.replace(sms._id, updated);
+    }
+
+    await enqueueSmsCallbackIfExists(ctx, sms, event);
+  },
+});
+
 async function enqueueCallbackIfExists(
   ctx: MutationCtx,
   email: Doc<"emails">,
@@ -885,6 +1558,31 @@ async function enqueueCallbackIfExists(
   }
 }
 
+async function enqueueSmsCallbackIfExists(
+  ctx: MutationCtx,
+  sms: Doc<"sms">,
+  event: SmsEvent,
+) {
+  const lastOptions = await ctx.db.query("lastOptions").unique();
+  if (!lastOptions) {
+    return;
+  }
+  if (lastOptions.options.onSmsEvent) {
+    const handle = lastOptions.options.onSmsEvent.fnHandle as FunctionHandle<
+      "mutation",
+      {
+        id: Id<"sms">;
+        event: SmsEvent;
+      },
+      void
+    >;
+    await callbackPool.enqueueMutation(ctx, handle, {
+      id: sms._id,
+      event,
+    });
+  }
+}
+
 async function cleanupEmail(ctx: MutationCtx, email: Doc<"emails">) {
   await ctx.db.delete(email._id);
   if (email.text) {
@@ -896,6 +1594,17 @@ async function cleanupEmail(ctx: MutationCtx, email: Doc<"emails">) {
   const events = await ctx.db
     .query("deliveryEvents")
     .withIndex("by_emailId_eventType", (q) => q.eq("emailId", email._id))
+    .collect();
+  for (const event of events) {
+    await ctx.db.delete(event._id);
+  }
+}
+
+async function cleanupSms(ctx: MutationCtx, sms: Doc<"sms">) {
+  await ctx.db.delete(sms._id);
+  const events = await ctx.db
+    .query("smsDeliveryEvents")
+    .withIndex("by_smsId_eventType", (q) => q.eq("smsId", sms._id))
     .collect();
   for (const event of events) {
     await ctx.db.delete(event._id);
@@ -922,6 +1631,57 @@ export const cleanupAbandonedEmails = mutation({
     }
     if (oldAndAbandoned.length === 500) {
       await ctx.scheduler.runAfter(0, api.lib.cleanupAbandonedEmails, {
+        olderThan,
+      });
+    }
+  },
+});
+
+export const cleanupOldSms = mutation({
+  args: { olderThan: v.optional(v.number()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const olderThan = args.olderThan ?? FINALIZED_EMAIL_RETENTION_MS;
+    const oldAndDone = await ctx.db
+      .query("sms")
+      .withIndex("by_finalizedAt", (q) =>
+        q.lt("finalizedAt", Date.now() - olderThan),
+      )
+      .take(100);
+    for (const sms of oldAndDone) {
+      await cleanupSms(ctx, sms);
+    }
+    if (oldAndDone.length > 0) {
+      console.log(`Cleaned up ${oldAndDone.length} SMS`);
+    }
+    if (oldAndDone.length === 100) {
+      await ctx.scheduler.runAfter(0, api.lib.cleanupOldSms, {
+        olderThan,
+      });
+    }
+  },
+});
+
+export const cleanupAbandonedSms = mutation({
+  args: { olderThan: v.optional(v.number()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const olderThan = args.olderThan ?? ABANDONED_EMAIL_RETENTION_MS;
+    const oldAndAbandoned = await ctx.db
+      .query("sms")
+      .withIndex("by_creation_time", (q) =>
+        q.lt("_creationTime", Date.now() - olderThan),
+      )
+      .take(500);
+
+    for (const sms of oldAndAbandoned) {
+      await cleanupSms(ctx, sms);
+    }
+    if (oldAndAbandoned.length > 0) {
+      console.log(`Cleaned up ${oldAndAbandoned.length} SMS`);
+    }
+    if (oldAndAbandoned.length === 500) {
+      await ctx.scheduler.runAfter(0, api.lib.cleanupAbandonedSms, {
         olderThan,
       });
     }

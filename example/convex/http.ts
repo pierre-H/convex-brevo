@@ -12,4 +12,12 @@ http.route({
   }),
 });
 
+http.route({
+  path: "/brevo-sms-webhook",
+  method: "POST",
+  handler: httpAction(async (ctx, req) => {
+    return await brevo.handleBrevoSmsWebhook(ctx, req);
+  }),
+});
+
 export default http;

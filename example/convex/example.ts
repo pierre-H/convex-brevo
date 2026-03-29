@@ -4,12 +4,20 @@ import {
   internalQuery,
 } from "./_generated/server";
 import { components, internal } from "./_generated/api";
-import { Brevo, type EmailId, vOnEmailEventArgs } from "convex-brevo";
+import {
+  Brevo,
+  type EmailId,
+  type SmsId,
+  vOnEmailEventArgs,
+  vOnSmsEventArgs,
+} from "convex-brevo";
 import { v } from "convex/values";
 
 export const brevo: Brevo = new Brevo(components.brevo, {
   onEmailEvent: internal.example.handleEmailEvent,
+  onSmsEvent: internal.example.handleSmsEvent,
   sandboxMode: true,
+  smsWebhookBaseUrl: process.env.BREVO_SMS_WEBHOOK_BASE_URL,
 });
 
 function recipient(email: string, name?: string) {
@@ -168,6 +176,79 @@ export const sendManualEmail = internalAction({
           throw new Error("No messageId returned from Brevo");
         }
         return data.messageId;
+      },
+    );
+  },
+});
+
+export const sendSms = internalAction({
+  args: {
+    recipient: v.optional(v.string()),
+    content: v.optional(v.string()),
+  },
+  returns: v.string(),
+  handler: async (ctx, args) => {
+    return await brevo.sendSms(ctx, {
+      sender: "MyShop",
+      recipient: args.recipient ?? "33680065433",
+      content: args.content ?? "Enter this code: CAAA08",
+      tag: "example-sms",
+    });
+  },
+});
+
+export const handleSmsEvent = internalMutation({
+  args: vOnSmsEventArgs,
+  handler: async (_ctx, args) => {
+    console.log("Got SMS callback!", args.id, args.event);
+  },
+});
+
+export const sendManualSms = internalAction({
+  args: {
+    recipient: v.optional(v.string()),
+    content: v.optional(v.string()),
+  },
+  returns: v.string(),
+  handler: async (ctx, args) => {
+    const recipient = args.recipient ?? "33680065433";
+    const content = args.content ?? "Enter this code: CAAA08";
+
+    return await brevo.sendSmsManually(
+      ctx,
+      {
+        sender: "MyShop",
+        recipient,
+        content,
+        tag: "manual-sms",
+      },
+      async (_smsId: SmsId) => {
+        const response = await fetch(
+          "https://api.brevo.com/v3/transactionalSMS/send",
+          {
+            method: "POST",
+            headers: {
+              accept: "application/json",
+              "api-key": process.env.BREVO_API_KEY!,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              sender: "MyShop",
+              recipient,
+              content,
+              type: "transactional",
+              tag: "manual-sms",
+            }),
+          },
+        );
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+        const data = (await response.json()) as { messageId?: number | string };
+        if (data.messageId === undefined) {
+          throw new Error("No messageId returned from Brevo SMS");
+        }
+        return String(data.messageId);
       },
     );
   },

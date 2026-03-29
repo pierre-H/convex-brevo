@@ -6,6 +6,8 @@ import {
   vOptions,
   vParams,
   vRecipient,
+  vSmsEventType,
+  vSmsStatus,
   vStatus,
 } from "./shared.js";
 
@@ -19,6 +21,9 @@ export default defineSchema({
   nextBatchRun: defineTable({
     runId: v.id("_scheduled_functions"),
   }),
+  nextSmsBatchRun: defineTable({
+    runId: v.id("_scheduled_functions"),
+  }),
   lastOptions: defineTable({
     options: vOptions,
   }),
@@ -29,6 +34,13 @@ export default defineSchema({
     createdAt: v.string(),
     message: v.optional(v.string()),
   }).index("by_emailId_eventType", ["emailId", "eventType"]),
+  smsDeliveryEvents: defineTable({
+    smsId: v.id("sms"),
+    messageId: v.string(),
+    eventType: vSmsEventType,
+    createdAt: v.string(),
+    message: v.optional(v.string()),
+  }).index("by_smsId_eventType", ["smsId", "eventType"]),
   emails: defineTable({
     sender: vRecipient,
     to: v.array(vRecipient),
@@ -51,6 +63,31 @@ export default defineSchema({
     deliveryDelayed: v.optional(v.boolean()),
     clicked: v.optional(v.boolean()),
     messageId: v.optional(v.string()),
+    segment: v.number(),
+    finalizedAt: v.number(),
+  })
+    .index("by_status_segment", ["status", "segment"])
+    .index("by_messageId", ["messageId"])
+    .index("by_finalizedAt", ["finalizedAt"]),
+  sms: defineTable({
+    sender: v.string(),
+    recipient: v.string(),
+    content: v.string(),
+    tag: v.optional(v.string()),
+    unicodeEnabled: v.optional(v.boolean()),
+    organisationPrefix: v.optional(v.string()),
+    status: vSmsStatus,
+    errorMessage: v.optional(v.string()),
+    messageId: v.optional(v.string()),
+    reply: v.optional(v.string()),
+    accepted: v.boolean(),
+    delivered: v.boolean(),
+    replied: v.boolean(),
+    softBounced: v.boolean(),
+    hardBounced: v.boolean(),
+    rejected: v.boolean(),
+    blacklisted: v.boolean(),
+    unsubscribed: v.boolean(),
     segment: v.number(),
     finalizedAt: v.number(),
   })

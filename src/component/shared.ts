@@ -10,6 +10,10 @@ export const onEmailEvent = v.object({
   fnHandle: v.string(),
 });
 
+export const onSmsEvent = v.object({
+  fnHandle: v.string(),
+});
+
 export const vStatus = v.union(
   v.literal("waiting"),
   v.literal("queued"),
@@ -21,6 +25,20 @@ export const vStatus = v.union(
   v.literal("failed"),
 );
 export type Status = Infer<typeof vStatus>;
+
+export const vSmsStatus = v.union(
+  v.literal("waiting"),
+  v.literal("queued"),
+  v.literal("cancelled"),
+  v.literal("sent"),
+  v.literal("accepted"),
+  v.literal("delivered"),
+  v.literal("soft_bounced"),
+  v.literal("hard_bounced"),
+  v.literal("rejected"),
+  v.literal("failed"),
+);
+export type SmsStatus = Infer<typeof vSmsStatus>;
 
 export const vRecipient = v.object({
   email: v.string(),
@@ -43,6 +61,9 @@ export const vOptions = v.object({
   apiKey: v.string(),
   sandboxMode: v.boolean(),
   onEmailEvent: v.optional(onEmailEvent),
+  onSmsEvent: v.optional(onSmsEvent),
+  smsWebhookBaseUrl: v.optional(v.string()),
+  smsWebhookSecret: v.optional(v.string()),
 });
 
 export type RuntimeConfig = Infer<typeof vOptions>;
@@ -95,6 +116,45 @@ export const vEmailEvent = v.object({
 
 export type EmailEvent = Infer<typeof vEmailEvent>;
 export type EventType = EmailEvent["event"];
+
+export const BREVO_SMS_EVENT_TYPES = [
+  "sent",
+  "accepted",
+  "delivered",
+  "replied",
+  "soft_bounce",
+  "hard_bounce",
+  "subscribe",
+  "unsubscribe",
+  "skip",
+  "rejected",
+  "blacklisted",
+] as const;
+
+export const vSmsEventType = v.union(literals(...BREVO_SMS_EVENT_TYPES));
+
+export const vSmsEvent = v.object({
+  id: v.optional(v.number()),
+  to: v.optional(v.string()),
+  sms_count: v.optional(v.number()),
+  credits_used: v.optional(v.number()),
+  remaining_credit: v.optional(v.number()),
+  messageId: v.union(v.number(), v.string()),
+  msg_status: vSmsEventType,
+  date: v.optional(v.string()),
+  type: v.optional(v.string()),
+  reference: v.optional(v.any()),
+  status: v.optional(v.string()),
+  description: v.optional(v.string()),
+  tag: v.optional(v.union(v.array(v.string()), v.string())),
+  ts_event: v.optional(v.union(v.number(), v.string())),
+  error_code: v.optional(v.number()),
+  bounce_type: v.optional(v.string()),
+  reply: v.optional(v.string()),
+});
+
+export type SmsEvent = Infer<typeof vSmsEvent>;
+export type SmsEventType = SmsEvent["msg_status"];
 
 export type RunQueryCtx = {
   runQuery: GenericQueryCtx<GenericDataModel>["runQuery"];
