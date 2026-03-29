@@ -149,3 +149,7 @@ while still storing status in the component tables.
   component tables.
 - SMS events are correlated either through the generated `smsId` in the webhook
   URL or by Brevo `messageId` fallback when no `smsWebhookBaseUrl` is used.
+
+## Legal disclaimer
+
+This project is an unofficial community integration. It is not affiliated, associated, authorized, endorsed by, or in any way officially connected with Brevo SAS. "Brevo" is a registered trademark belonging to its respective owners.
