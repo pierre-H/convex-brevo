@@ -1,6 +1,13 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { vEventType, vOptions, vStatus, vTemplate } from "./shared.js";
+import {
+  vEventType,
+  vHeaders,
+  vOptions,
+  vParams,
+  vRecipient,
+  vStatus,
+} from "./shared.js";
 
 export default defineSchema({
   content: defineTable({
@@ -17,29 +24,24 @@ export default defineSchema({
   }),
   deliveryEvents: defineTable({
     emailId: v.id("emails"),
-    resendId: v.string(),
+    messageId: v.string(),
     eventType: vEventType,
     createdAt: v.string(),
     message: v.optional(v.string()),
   }).index("by_emailId_eventType", ["emailId", "eventType"]),
   emails: defineTable({
-    from: v.string(),
-    to: v.union(v.array(v.string()), v.string()),
-    cc: v.optional(v.array(v.string())),
-    bcc: v.optional(v.array(v.string())),
+    sender: vRecipient,
+    to: v.array(vRecipient),
+    cc: v.optional(v.array(vRecipient)),
+    bcc: v.optional(v.array(vRecipient)),
     subject: v.optional(v.string()),
-    replyTo: v.array(v.string()),
+    replyTo: v.optional(vRecipient),
     html: v.optional(v.id("content")),
     text: v.optional(v.id("content")),
-    template: v.optional(vTemplate),
-    headers: v.optional(
-      v.array(
-        v.object({
-          name: v.string(),
-          value: v.string(),
-        }),
-      ),
-    ),
+    templateId: v.optional(v.number()),
+    params: v.optional(vParams),
+    headers: v.optional(vHeaders),
+    tags: v.optional(v.array(v.string())),
     status: vStatus,
     complained: v.boolean(),
     errorMessage: v.optional(v.string()),
@@ -48,11 +50,11 @@ export default defineSchema({
     failed: v.optional(v.boolean()),
     deliveryDelayed: v.optional(v.boolean()),
     clicked: v.optional(v.boolean()),
-    resendId: v.optional(v.string()),
+    messageId: v.optional(v.string()),
     segment: v.number(),
     finalizedAt: v.number(),
   })
     .index("by_status_segment", ["status", "segment"])
-    .index("by_resendId", ["resendId"])
+    .index("by_messageId", ["messageId"])
     .index("by_finalizedAt", ["finalizedAt"]),
 });

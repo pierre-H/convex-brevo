@@ -6,12 +6,10 @@ import {
 } from "convex/server";
 import { type Infer, v } from "convex/values";
 
-// Validator for the onEmailEvent option.
 export const onEmailEvent = v.object({
   fnHandle: v.string(),
 });
 
-// Validator for the status of an email.
 export const vStatus = v.union(
   v.literal("waiting"),
   v.literal("queued"),
@@ -24,147 +22,79 @@ export const vStatus = v.union(
 );
 export type Status = Infer<typeof vStatus>;
 
-// Validator for template data.
-export const vTemplate = v.object({
-  id: v.string(),
-  variables: v.optional(v.record(v.string(), v.union(v.string(), v.number()))),
+export const vRecipient = v.object({
+  email: v.string(),
+  name: v.optional(v.string()),
 });
-export type Template = Infer<typeof vTemplate>;
+export type Recipient = Infer<typeof vRecipient>;
 
-// Validator for the runtime options used by the component.
+export const vParams = v.record(
+  v.string(),
+  v.union(v.string(), v.number(), v.boolean()),
+);
+export type Params = Infer<typeof vParams>;
+
+export const vHeaders = v.record(v.string(), v.string());
+export type Headers = Infer<typeof vHeaders>;
+
 export const vOptions = v.object({
   initialBackoffMs: v.number(),
   retryAttempts: v.number(),
   apiKey: v.string(),
-  testMode: v.boolean(),
+  sandboxMode: v.boolean(),
   onEmailEvent: v.optional(onEmailEvent),
 });
 
 export type RuntimeConfig = Infer<typeof vOptions>;
 
-const commonFields = {
-  broadcast_id: v.optional(v.string()),
-  created_at: v.string(),
-  email_id: v.string(),
-  from: v.union(v.string(), v.array(v.string())),
-  to: v.union(v.string(), v.array(v.string())),
-  cc: v.optional(v.union(v.string(), v.array(v.string()))),
-  bcc: v.optional(v.union(v.string(), v.array(v.string()))),
-  reply_to: v.optional(v.union(v.string(), v.array(v.string()))),
-  headers: v.optional(
-    v.array(
-      v.object({
-        name: v.string(),
-        value: v.string(),
-      }),
-    ),
-  ),
-  subject: v.string(),
-  tags: v.optional(
-    v.union(
-      v.record(v.string(), v.string()),
-      v.array(
-        v.object({
-          name: v.string(),
-          value: v.string(),
-        }),
-      ),
-    ),
-  ),
-};
+export const vStoredTemplate = v.object({
+  templateId: v.number(),
+  params: v.optional(vParams),
+});
+export type StoredTemplate = Infer<typeof vStoredTemplate>;
 
-// Normalized webhook events coming from Resend.
-export const vEmailEvent = v.union(
-  v.object({
-    type: v.literal("email.sent"),
-    created_at: v.string(),
-    data: v.object(commonFields),
-  }),
-  v.object({
-    type: v.literal("email.delivered"),
-    created_at: v.string(),
-    data: v.object(commonFields),
-  }),
-  v.object({
-    type: v.literal("email.delivery_delayed"),
-    created_at: v.string(),
-    data: v.object(commonFields),
-  }),
-  v.object({
-    type: v.literal("email.complained"),
-    created_at: v.string(),
-    data: v.object(commonFields),
-  }),
-  v.object({
-    type: v.literal("email.bounced"),
-    created_at: v.string(),
-    data: v.object({
-      ...commonFields,
-      bounce: v.object({
-        message: v.string(),
-        subType: v.string(),
-        type: v.string(),
-      }),
-    }),
-  }),
-  v.object({
-    type: v.literal("email.opened"),
-    created_at: v.string(),
-    data: v.object({
-      ...commonFields,
-      open: v.object({
-        ipAddress: v.string(),
-        timestamp: v.string(),
-        userAgent: v.string(),
-      }),
-    }),
-  }),
-  v.object({
-    type: v.literal("email.clicked"),
-    created_at: v.string(),
-    data: v.object({
-      ...commonFields,
-      click: v.object({
-        ipAddress: v.string(),
-        link: v.string(),
-        timestamp: v.string(),
-        userAgent: v.string(),
-      }),
-    }),
-  }),
-  v.object({
-    type: v.literal("email.failed"),
-    created_at: v.string(),
-    data: v.object({
-      ...commonFields,
-      failed: v.object({
-        reason: v.string(),
-      }),
-    }),
-  }),
-);
-
-export const ACCEPTED_EVENT_TYPES = [
-  "email.sent",
-  "email.delivered",
-  "email.bounced",
-  "email.complained",
-  "email.failed",
-  "email.delivery_delayed",
-  "email.opened",
-  "email.clicked",
+export const BREVO_EVENT_TYPES = [
+  "sent",
+  "delivered",
+  "deferred",
+  "opened",
+  "clicked",
+  "soft_bounce",
+  "softBounce",
+  "hard_bounce",
+  "hardBounce",
+  "invalid_email",
+  "invalidEmail",
+  "complaint",
+  "complained",
+  "unsubscribed",
+  "blocked",
+  "error",
 ] as const;
 
-export const vEventType = v.union(literals(...ACCEPTED_EVENT_TYPES));
+export const vEventType = v.union(literals(...BREVO_EVENT_TYPES));
+
+export const vEmailEvent = v.object({
+  event: vEventType,
+  email: v.optional(v.string()),
+  id: v.optional(v.union(v.number(), v.string())),
+  date: v.optional(v.string()),
+  ts: v.optional(v.number()),
+  ts_event: v.optional(v.number()),
+  ts_epoch: v.optional(v.number()),
+  subject: v.optional(v.string()),
+  reason: v.optional(v.string()),
+  message: v.optional(v.string()),
+  tag: v.optional(v.string()),
+  tags: v.optional(v.array(v.string())),
+  url: v.optional(v.string()),
+  link: v.optional(v.string()),
+  sending_ip: v.optional(v.string()),
+  "message-id": v.string(),
+});
 
 export type EmailEvent = Infer<typeof vEmailEvent>;
-export type EventEventTypes = EmailEvent["type"];
-export type EventEventOfType<T extends EventEventTypes> = Extract<
-  EmailEvent,
-  { type: T }
->;
-
-/* Type utils follow */
+export type EventType = EmailEvent["event"];
 
 export type RunQueryCtx = {
   runQuery: GenericQueryCtx<GenericDataModel>["runQuery"];

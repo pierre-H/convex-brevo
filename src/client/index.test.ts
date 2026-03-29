@@ -7,14 +7,14 @@ const schema = defineSchema({});
 
 function setupTest() {
   const t = convexTest(schema, modules);
-  t.registerComponent("resend", componentSchema, componentModules);
+  t.registerComponent("brevo", componentSchema, componentModules);
   return t;
 }
 
 type ConvexTest = ReturnType<typeof setupTest>;
 
-describe("Resend", () => {
-  test("handleResendEventWebhook", async () => {
+describe("Brevo", () => {
+  test("handleBrevoEventWebhook", async () => {
     const _t: ConvexTest = setupTest();
   });
 });

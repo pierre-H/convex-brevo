@@ -51,5 +51,5 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
-  resend: import("@convex-dev/resend/_generated/component.js").ComponentApi<"resend">;
+  brevo: import("convex-brevo/_generated/component.js").ComponentApi<"brevo">;
 };

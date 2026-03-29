@@ -10,17 +10,6 @@
 
 import type { FunctionReference } from "convex/server";
 
-/**
- * A utility for referencing a Convex component's exposed API.
- *
- * Useful when expecting a parameter like `components.myComponent`.
- * Usage:
- * ```ts
- * async function myFunction(ctx: QueryCtx, component: ComponentApi) {
- *   return ctx.runQuery(component.someFile.someQuery, { ...args });
- * }
- * ```
- */
 export type ComponentApi<Name extends string | undefined = string | undefined> =
   {
     lib: {
@@ -49,11 +38,14 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         {
-          from: string;
-          headers?: Array<{ name: string; value: string }>;
-          replyTo?: Array<string>;
+          sender: { email: string; name?: string };
+          to: Array<{ email: string; name?: string }>;
+          cc?: Array<{ email: string; name?: string }>;
+          bcc?: Array<{ email: string; name?: string }>;
           subject: string;
-          to: Array<string> | string;
+          replyTo?: { email: string; name?: string };
+          headers?: Record<string, string>;
+          tags?: string[];
         },
         string,
         Name
@@ -63,9 +55,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         { emailId: string },
         {
-          bcc?: Array<string>;
           bounced?: boolean;
-          cc?: Array<string>;
           clicked?: boolean;
           complained: boolean;
           createdAt: number;
@@ -73,13 +63,14 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           errorMessage?: string;
           failed?: boolean;
           finalizedAt: number;
-          from: string;
-          headers?: Array<{ name: string; value: string }>;
-          html?: string;
+          headers?: Record<string, string>;
+          htmlContent?: string;
+          messageId?: string;
           opened: boolean;
-          replyTo: Array<string>;
-          resendId?: string;
+          params?: Record<string, string | number | boolean>;
+          replyTo?: { email: string; name?: string };
           segment: number;
+          sender: { email: string; name?: string };
           status:
             | "waiting"
             | "queued"
@@ -90,12 +81,12 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "bounced"
             | "failed";
           subject?: string;
-          template?: {
-            id: string;
-            variables?: Record<string, string | number>;
-          };
-          text?: string;
-          to: Array<string>;
+          tags?: string[];
+          templateId?: number;
+          textContent?: string;
+          to: Array<{ email: string; name?: string }>;
+          cc?: Array<{ email: string; name?: string }>;
+          bcc?: Array<{ email: string; name?: string }>;
         } | null,
         Name
       >;
@@ -134,26 +125,25 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         {
-          bcc?: Array<string>;
-          cc?: Array<string>;
-          from: string;
-          headers?: Array<{ name: string; value: string }>;
-          html?: string;
+          sender: { email: string; name?: string };
+          to: Array<{ email: string; name?: string }>;
+          cc?: Array<{ email: string; name?: string }>;
+          bcc?: Array<{ email: string; name?: string }>;
+          subject?: string;
+          htmlContent?: string;
+          textContent?: string;
+          templateId?: number;
+          params?: Record<string, string | number | boolean>;
+          replyTo?: { email: string; name?: string };
+          headers?: Record<string, string>;
+          tags?: string[];
           options: {
             apiKey: string;
             initialBackoffMs: number;
             onEmailEvent?: { fnHandle: string };
             retryAttempts: number;
-            testMode: boolean;
+            sandboxMode: boolean;
           };
-          replyTo?: Array<string>;
-          subject?: string;
-          template?: {
-            id: string;
-            variables?: Record<string, string | number>;
-          };
-          text?: string;
-          to: Array<string>;
         },
         string,
         Name
@@ -164,7 +154,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         {
           emailId: string;
           errorMessage?: string;
-          resendId?: string;
+          messageId?: string;
           status:
             | "waiting"
             | "queued"

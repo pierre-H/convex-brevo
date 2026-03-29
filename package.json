@@ -1,11 +1,10 @@
 {
-  "name": "@convex-dev/resend",
-  "description": "A resend component for Convex.",
-  "repository": "github:get-convex/resend",
-  "homepage": "https://github.com/get-convex/resend#readme",
+  "name": "convex-brevo",
+  "description": "A Brevo component for Convex.",
+  "repository": "github:pierre-H/convex-brevo",
+  "homepage": "https://github.com/pierre-H/convex-brevo#readme",
   "bugs": {
-    "email": "support@convex.dev",
-    "url": "https://github.com/get-convex/resend/issues"
+    "url": "https://github.com/pierre-H/convex-brevo/issues"
   },
   "version": "0.2.3",
   "license": "Apache-2.0",
@@ -24,7 +23,7 @@
     "build": "tsc --project ./tsconfig.build.json",
     "build:codegen": "npx convex codegen --component-dir ./src/component && npm run build",
     "build:clean": "rm -rf dist *.tsbuildinfo && npm run build:codegen",
-    "typecheck": "tsc --noEmit && tsc -p example/convex",
+    "typecheck": "npm run build && tsc --noEmit && tsc -p example/convex",
     "lint": "eslint .",
     "all": "run-p -r 'dev:*' 'test:watch'",
     "test": "vitest run --typecheck",
@@ -94,8 +93,6 @@
   "dependencies": {
     "@convex-dev/rate-limiter": "^0.3.0",
     "@convex-dev/workpool": "^0.3.0",
-    "remeda": "^2.26.0",
-    "resend": "^6.6.0",
-    "svix": "^1.70.0"
+    "remeda": "^2.26.0"
   }
 }

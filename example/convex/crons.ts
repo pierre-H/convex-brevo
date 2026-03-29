@@ -5,21 +5,21 @@ import { internalMutation } from "./_generated/server.js";
 const crons = cronJobs();
 
 crons.interval(
-  "Remove old emails from the resend component",
+  "Remove old emails from the brevo component",
   { hours: 1 },
-  internal.crons.cleanupResend,
+  internal.crons.cleanupBrevo,
 );
 
 const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-export const cleanupResend = internalMutation({
+export const cleanupBrevo = internalMutation({
   args: {},
   handler: async (ctx) => {
-    await ctx.scheduler.runAfter(0, components.resend.lib.cleanupOldEmails, {
+    await ctx.scheduler.runAfter(0, components.brevo.lib.cleanupOldEmails, {
       olderThan: ONE_WEEK_MS,
     });
     await ctx.scheduler.runAfter(
       0,
-      components.resend.lib.cleanupAbandonedEmails,
+      components.brevo.lib.cleanupAbandonedEmails,
       { olderThan: ONE_WEEK_MS },
     );
   },
